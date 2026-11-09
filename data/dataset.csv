@@ -1,0 +1,9 @@
+id,text,label
+1,Urgent ai-email-threat-detection alert require immediate action,risk
+2,Weekly ai-email-threat-detection status looks normal,benign
+3,Suspicious ai-email-threat-detection anomaly detected please verify,risk
+4,Routine ai-email-threat-detection maintenance completed,benign
+5,Fraud pattern in ai-email-threat-detection submissions,risk
+6,Training notes for ai-email-threat-detection operators,benign
+7,Phishing attempt referencing ai-email-threat-detection,risk
+8,All clear report for ai-email-threat-detection queue,benign

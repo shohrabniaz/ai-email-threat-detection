@@ -1,44 +1,59 @@
 from __future__ import annotations
+import csv
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
-import yaml
 
-def load_playbook(path: Path) -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_rows(path: Path) -> list[dict]:
+    with path.open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
-def execute_steps(playbook: dict, answers: dict | None = None) -> dict:
-    answers = answers or {}
-    results = []
-    completed = 0
-    for step in playbook.get("steps", []):
-        sid = step["id"]
-        required = bool(step.get("required", True))
-        done = bool(answers.get(sid, step.get("default_done", False)))
-        if done:
-            completed += 1
-        results.append({
-            "id": sid,
-            "title": step.get("title"),
-            "owner": step.get("owner"),
-            "required": required,
-            "done": done,
-            "sla_hours": step.get("sla_hours"),
-        })
-    total = len(results) or 1
+def score_text(text: str, positive: set[str], negative: set[str]) -> float:
+    tokens = [t.strip(".,!?").lower() for t in (text or "").split()]
+    if not tokens:
+        return 0.0
+    pos = sum(1 for t in tokens if t in positive)
+    neg = sum(1 for t in tokens if t in negative)
+    return round((pos - neg) / len(tokens), 4)
+
+def analyse(rows: list[dict]) -> dict:
+    positive = {"good", "great", "ok", "resolved", "safe", "legit", "ham"}
+    negative = {"bad", "phish", "malware", "urgent", "fraud", "spam", "breach", "fail", "risk"}
+    labeled = []
+    for r in rows:
+        text = r.get("text") or r.get("subject") or r.get("message") or ""
+        s = score_text(text, positive, negative)
+        label = r.get("label") or ("risk" if s < 0 else "benign")
+        labeled.append({**r, "score": s, "predicted": "risk" if s < 0 else "benign", "label": label})
+    by = Counter(x["predicted"] for x in labeled)
+    matched = sum(1 for x in labeled if x.get("label") and x["label"] == x["predicted"])
     return {
-        "playbook": playbook.get("name"),
-        "completion_percent": round(100.0 * completed / total, 1),
-        "completed": completed,
-        "total": total,
-        "open_required": [r["id"] for r in results if r["required"] and not r["done"]],
-        "steps": results,
+        "row_count": len(labeled),
+        "prediction_counts": dict(by),
+        "accuracy_if_labeled": round(matched / max(len(labeled), 1), 3),
+        "samples": labeled[:10],
     }
 
+def metric_dashboard(rows: list[dict], metric_col: str = "value") -> dict:
+    series = defaultdict(list)
+    for r in rows:
+        key = r.get("category") or r.get("day") or "all"
+        try:
+            series[key].append(float(r.get(metric_col) or r.get("metric") or 0))
+        except ValueError:
+            continue
+    summary = {
+        k: {"count": len(v), "avg": round(sum(v)/len(v), 2) if v else 0, "max": max(v) if v else 0, "min": min(v) if v else 0}
+        for k, v in series.items()
+    }
+    return {"categories": summary, "category_count": len(summary)}
+
 def run(data_dir: Path, out_dir: Path) -> dict:
-    playbook = load_playbook(data_dir / "playbook.yaml")
-    answers_path = data_dir / "step_status.json"
-    answers = json.loads(answers_path.read_text(encoding="utf-8")) if answers_path.exists() else {}
-    summary = execute_steps(playbook, answers)
+    rows = load_rows(data_dir / "dataset.csv")
+    if rows and ("text" in rows[0] or "subject" in rows[0] or "message" in rows[0]):
+        summary, name = analyse(rows), "ai_analysis.json"
+    else:
+        summary, name = metric_dashboard(rows), "analytics_summary.json"
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "playbook_run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / name).write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
